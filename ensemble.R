@@ -49,17 +49,11 @@ ensablem_ts_forecast = function (x,
   
   # Creating a list of Data frames, each column of the dataframe will hold the forecasted values
   # and chec dataframe is unique to EACH forecasting method
-    #inisilizing a null list
-      ft_mean = vector(0)
-      ft_upper = vector(0)
-      ft_lower = vector(0)
     #now building the proper dataframes
-      for( m in models){
-       ft_mean = c(ft_mean, data.frame(matrix(o,nrow = (h + abs(min(to_index))), ncol = length(to_index)))) 
+     ft_mean = lapply(models, function(x) data.frame(matrix(0,nrow = h, ncol = length(to_index))))
        ######################
        # WORKING HERE YA BASTARD!!!!!!
        ######################
-      } 
     
     names(ft_mean) = models
     ft_upper = ft_mean
