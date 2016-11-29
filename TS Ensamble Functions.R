@@ -1,19 +1,13 @@
 
 library(dplyr)
 
-ma = function(arr, n = 3){
-  res = arr
-  for(i in n:length(arr)){
-    res[i] = mean(arr[(i-n+1):i])
-  }
-  return(res)
-}
 ########################################################################
 # 
 # this function holds the methods to run the TS analysis
 #
 ########################################################################
-models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_adj) {
+
+models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_adj, CI = 95, return_method = c('stack','list')) {
   if(!is.na(ma_adj)){
     df = ma(df, n = ma_adj)
   }
@@ -55,64 +49,79 @@ models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_a
     
     df[(NROW(df) -  nrow(data.frame(M[1])) + 1):NROW(df)] = data.frame(M[1])[,1]
     df[is.na(df)]=df[is.na(df)]
-    frcst = forecast(M,h=h)
+    frcst = forecast(M,h=h, level = CI)
     
   } else if(method == 'ARIMA')
   {
-    frcst = forecast(M, h=h)
+    frcst = forecast(M, h=h, levle = CI)
     df = df - as.numeric(M$residuals) 
     
   } else if(method == 'STL'){
     df = rowSums(data.frame(M[1])[,1:2])
-    frcst = forecast(M,h=h,method = 'arima')
+    frcst = forecast(M,h=h,method = 'arima', level = CI)
     
   } else if(method == 'TBATS'){
     df = as.numeric(M$fitted.values)
-    frcst = forecast(M, h=h)
+    frcst = forecast(M, h=h, level = CI)
   } else if(method == 'lm'){
     lm_predict = as.double(predict(M, newdata = data.frame(t = 52:(52 + h))))
     # lm_predict = lm_predict + (df[NROW(df)] - lm_predict[1]) #adjusting it so that the last point is right on target
+    z_score = qnorm(float(CI)/100)
     sd_df = sd(df)
     frcst = structure(list(
                     mean = lm_predict[2:NROW(lm_predict)],
-                    lower = data.frame(lm_predict[2:NROW(lm_predict)] - 1.645*sd_df,
-                                        lm_predict[2:NROW(lm_predict)] - 1.645*sd_df
+                    lower = data.frame(lm_predict[2:NROW(lm_predict)] - z_score*sd_df,
+                                        lm_predict[2:NROW(lm_predict)] - z_Score*sd_df
                     ),
-                    upper = data.frame(lm_predict[2:NROW(lm_predict)] + 1.645*sd_df,
-                                        lm_predict[2:NROW(lm_predict)] + 1.645*sd_df
+                    upper = data.frame(lm_predict[2:NROW(lm_predict)] + z_score*sd_df,
+                                        lm_predict[2:NROW(lm_predict)] + z_Score*sd_df
                     )
               )
         )               
     
   } else {
     df
+  	z_score = qnorm(float(CI)/100)
     frcst =  structure(list(
       mean = rep(df[NROW(df)], h),
-      lower = data.frame(rep(df[NROW(df)] - 1.645*df(df), h),
-                         rep(df[NROW(df)] - 1.645*df(df), h)
+      lower = data.frame(rep(df[NROW(df)] - z_score*df(df), h),
+                         rep(df[NROW(df)] - z_score*df(df), h)
       ),
-      upper = data.frame(rep(df[NROW(df)] + 1.645*df(df), h),
-                         rep(df[NROW(df)] + 1.645*df(df), h)
+      upper = data.frame(rep(df[NROW(df)] + z_score*df(df), h),
+                         rep(df[NROW(df)] + z_Score*df(df), h)
       )
     )
     )
     
   }
-  
-  
-  output = structure(list(df = df, forecast = frcst))
-  
+  if(return_method[1] == 'list') {
+  		output = structure(list(df = df, forecast = frcst))
+  }
+	else{
+		frcst = data.frame(mean = as.numeric(frcst$mean), upper = as.numeric(frcst$upper), lower = as.numeric(frcst$lower) )
+		df = data.frame(mean = df, upper = df, lower = df)
+		output = rbind(df, frcst)
+	}
   return(output)
   
 }
 
 
+########################################################################
+# 
+# this function applies a moving average to the data
+#
+########################################################################
 
 
 
-
-
-
+ma = function(arr, n = 3){
+	res = arr
+	for(i in n:length(arr)){
+		res[i] = mean(arr[(i-n+1):i])
+	}
+	return(res)
+}
 
 ########################################################################
 # 
