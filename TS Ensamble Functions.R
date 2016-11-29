@@ -7,17 +7,40 @@ library(dplyr)
 #
 ########################################################################
 
-models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_adj, CI = 95, return_method = c('stack','list')) {
-  if(!is.na(ma_adj)){
+models_runs = function(method, 
+                       start, 
+                       frequency, 
+                       df, 
+                       h, surpress.error = F, 
+                       season = F,
+                       ma_adj = 0, 
+                       CI = 95, 
+                       return_method = c('stack','list')) {
+  if(ma_adj > 0){
     df = ma(df, n = ma_adj)
   }
+  
+  if(season & method != 'STL'){
+    seas = stl(ts(df, start = start, frequency = frequency), s.window = h, robust = T)
+    
+    df = seas$time.series[,2] #for the trend compponent
+    
+    seas = list( seasonal = as.double(rep(seas$time.series[(nrow(seas$time.series) - frequency + 1):nrow(seas$time.series),1],
+                     ceiling(h/frequency))[1:h]),
+                 error = as.numeric(seas$time.series[nrow(seas$time.series),3])
+                 )
+  } else {
+    seas = list(seasonl = 0, error = 0)
+    
+  }
   if (method == 'HoltWinters') {
-
+    
     M = try(HoltWinters(ts(df, start = start, frequency = frequency)), silent = T)
-
+    
   } else if (method == 'ARIMA'){
     for(d in 0:5)
     {
+      print('try')
       M = try(arima(as.numeric(df), order = c(1,d,1), seasonal = list(order = c(1,d,1), period = frequency)),silent = T)
       if(!inherits(M,"try-error")) {break}
     }
@@ -32,7 +55,7 @@ models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_a
   } else if (method == 'lm') {
     sub_df = data.frame(y = df[(NROW(df) - 51):NROW(df)], t = 1:52, wt = 1:52/52)
     M = lm(y ~ t, data = sub_df, weight = sub_df$wt) 
-   # M = lm(y ~ t, data = sub_df) 
+    # M = lm(y ~ t, data = sub_df) 
     
   } else {
     
@@ -42,7 +65,7 @@ models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_a
   
   if(inherits(M,"try-error")) {
     if(!surpress.error){
-        print(paste(c(method," Failed, will not use"), sep = ""))}
+      print(paste(c(method," Failed, will not use"), sep = ""))}
     df = 0
     frcst = 0
   } else if (method == 'HoltWinters'){
@@ -53,7 +76,7 @@ models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_a
     
   } else if(method == 'ARIMA')
   {
-    frcst = forecast(M, h=h, levle = CI)
+    frcst = forecast(M, h=h, level = CI)
     df = df - as.numeric(M$residuals) 
     
   } else if(method == 'STL'){
@@ -69,39 +92,44 @@ models_runs = function(method, start, frequency, df, h, surpress.error = F, ma_a
     z_score = qnorm(float(CI)/100)
     sd_df = sd(df)
     frcst = structure(list(
-                    mean = lm_predict[2:NROW(lm_predict)],
-                    lower = data.frame(lm_predict[2:NROW(lm_predict)] - z_score*sd_df,
-                                        lm_predict[2:NROW(lm_predict)] - z_Score*sd_df
-                    ),
-                    upper = data.frame(lm_predict[2:NROW(lm_predict)] + z_score*sd_df,
-                                        lm_predict[2:NROW(lm_predict)] + z_Score*sd_df
-                    )
-              )
-        )               
+      mean = lm_predict[2:NROW(lm_predict)],
+      lower = data.frame(lm_predict[2:NROW(lm_predict)] - z_score*sd_df
+      ),
+      upper = data.frame(lm_predict[2:NROW(lm_predict)] + z_score*sd_df
+      )
+    )
+    )               
     
   } else {
     df
-  	z_score = qnorm(float(CI)/100)
+    z_score = qnorm(float(CI)/100)
     frcst =  structure(list(
       mean = rep(df[NROW(df)], h),
-      lower = data.frame(rep(df[NROW(df)] - z_score*df(df), h),
-                         rep(df[NROW(df)] - z_score*df(df), h)
+      lower = data.frame(rep(df[NROW(df)] - z_score*df(df), h)
       ),
-      upper = data.frame(rep(df[NROW(df)] + z_score*df(df), h),
-                         rep(df[NROW(df)] + z_Score*df(df), h)
+      upper = data.frame(rep(df[NROW(df)] + z_score*df(df), h)
       )
     )
     )
     
   }
   if(return_method[1] == 'list') {
-  		output = structure(list(df = df, forecast = frcst))
+    output = structure(list(df = df, forecast = frcst))
   }
-	else{
-		frcst = data.frame(mean = as.numeric(frcst$mean), upper = as.numeric(frcst$upper), lower = as.numeric(frcst$lower) )
-		df = data.frame(mean = df, upper = df, lower = df)
-		output = rbind(df, frcst)
-	}
+  else{
+    
+    print(str(as.numeric(frcst$mean +  seas$season + seas$error)))
+    
+    output = data.frame(mean = as.numeric(frcst$mean +  seas$season + seas$error),
+                       upper = as.numeric(frcst$upper + seas$season + seas$error), 
+                       lower = as.numeric(frcst$lower + seas$season + seas$error))
+
+    df = data.frame(mean = as.numeric(df), 
+                    upper = as.numeric(df), 
+                    lower = as.numeric(df))
+ 
+    output = rbind(df, output)
+  }
   return(output)
   
 }
