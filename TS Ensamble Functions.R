@@ -93,47 +93,138 @@ models_runs = function(method,
     sd_df = sd(df)
     frcst = structure(list(
       mean = lm_predict[2:NROW(lm_predict)],
-      lower = data.frame(lm_predict[2:NROW(lm_predict)] - z_score*sd_df
-      ),
-      upper = data.frame(lm_predict[2:NROW(lm_predict)] + z_score*sd_df
-      )
-    )
-    )               
-    
-  } else {
-    df
-    z_score = qnorm(float(CI)/100)
-    frcst =  structure(list(
-      mean = rep(df[NROW(df)], h),
-      lower = data.frame(rep(df[NROW(df)] - z_score*df(df), h)
-      ),
-      upper = data.frame(rep(df[NROW(df)] + z_score*df(df), h)
-      )
-    )
-    )
-    
-  }
-  if(return_method[1] == 'list') {
-    output = structure(list(df = df, forecast = frcst))
-  }
-  else{
-    
-    print(str(as.numeric(frcst$mean +  seas$season + seas$error)))
-    
-    output = data.frame(mean = as.numeric(frcst$mean +  seas$season + seas$error),
-                       upper = as.numeric(frcst$upper + seas$season + seas$error), 
-                       lower = as.numeric(frcst$lower + seas$season + seas$error))
+models_runs = function(method, 
+                       start = c(1900,1), 
+                       frequency, 
+                       df, 
+                       h, 
+                       surpress.error = F, 
+                       season = F,
+                       ma_adj = 0, 
+                       CI = 95, 
+                       return_method = c('stack','list')) {
+      if(ma_adj > 0){
+        df = ma(df, n = ma_adj)
+      }
+      
+      if(season & method != 'STL'){
+        seas = stl(ts(df, start = start, frequency = frequency), s.window = h, robust = T)
+        
+        df = seas$time.series[,2] #for the trend compponent
+        
+        seas = list( seasonal = as.double(rep(seas$time.series[(nrow(seas$time.series) - frequency + 1):nrow(seas$time.series),1],
+                         ceiling(h/frequency))[1:h]),
+                     error = as.numeric(seas$time.series[nrow(seas$time.series),3])
+                     )
+      } else {
+        seas = list(seasonl = 0, error = 0)
+        
+      }
+      if (method == 'HoltWinters') {
+        
+        M = try(HoltWinters(ts(df, start = start, frequency = frequency)), silent = T)
+        
+      } else if (method == 'ARIMA'){
+        for(d in 0:5)
+        {
+          print('try')
+          M = try(arima(as.numeric(df), order = c(1,d,1), seasonal = list(order = c(1,d,1), period = frequency)),silent = T)
+          if(!inherits(M,"try-error")) {break}
+        }
+        if(inherits(M,"try-error")) { #ERROR
+          print("Couldn't find a non stationary means for ARIMA; switching to auto arima")
+          M = auto.arima(df, parallel =  T, stepwise = F)
+        } 
+      }else if (method == 'STL'){
+        M = try(stl(ts(df, start = start, frequency = frequency), s.window = "periodic", robust = T, s.degree = 1), silent = F)
+      } else if  (method == 'TBATS') {
+        M = try(tbats(ts(df, start = start, frequency = frequency), seasonal.periods = frequency), silent = F)
+      } else if (method == 'lm') {
+        sub_df = data.frame(y = df[(NROW(df) - 51):NROW(df)], t = 1:52, wt = 1:52/52)
+        M = lm(y ~ t, data = sub_df, weight = sub_df$wt) 
+        # M = lm(y ~ t, data = sub_df) 
+        
+      } else {
+        
+        M == 1
+      }
+      
+      
+      if(inherits(M,"try-error")) {
+        if(!surpress.error){
+          print(paste(c(method," Failed, will not use"), sep = ""))}
+   
+      } else if (method == 'HoltWinters'){
+        
+        df[(NROW(df) -  nrow(data.frame(M[1])) + 1):NROW(df)] = data.frame(M[1])[,1]
+        df[is.na(df)]=df[is.na(df)]
+        frcst = forecast(M,h=h, level = CI)
+        
+      } else if(method == 'ARIMA')
+      {
+        frcst = forecast(M, h=h, level = CI)
+        df = df - as.numeric(M$residuals) 
+        
+      } else if(method == 'STL'){
+        df = rowSums(data.frame(M[1])[,1:2])
+        frcst = forecast(M,h=h,method = 'arima', level = CI)
+        
+      } else if(method == 'TBATS'){
+        df = as.numeric(M$fitted.values)
+        frcst = forecast(M, h=h, level = CI)
+      } else if(method == 'lm'){
+        lm_predict = as.double(predict(M, newdata = data.frame(t = 52:(52 + h))))
+        # lm_predict = lm_predict + (df[NROW(df)] - lm_predict[1]) #adjusting it so that the last point is right on target
+        z_score = qnorm(float(CI)/100)
+        sd_df = sd(df)
+        frcst = structure(list(
+          mean = lm_predict[2:NROW(lm_predict)],
+          lower = data.frame(lm_predict[2:NROW(lm_predict)] - z_score*sd_df
+          ),
+          upper = data.frame(lm_predict[2:NROW(lm_predict)] + z_score*sd_df
+          )
+        )
+        )               
+        
+      } else {
+        df
+        z_score = qnorm(float(CI)/100)
+        frcst =  structure(list(
+          mean = rep(df[NROW(df)], h),
+          lower = data.frame(rep(df[NROW(df)] - z_score*df(df), h)
+          ),
+          upper = data.frame(rep(df[NROW(df)] + z_score*df(df), h)
+          )
+        )
+        )
+        
+      }
+  
+  #returning the values now
+  if(inherits(M,"try-error")){
+    output = data.frame(mean = rep(0, (h + nrow(df))),
+                        upper = rep(0, (h + nrow(df))),
+                        lower = rep(0, (h + nrow(df)))
+                        )
+  } else if(return_method[1] == 'list') {
+        output = structure(list(df = df, forecast = frcst))
+      }
+      else{
+        
 
-    df = data.frame(mean = as.numeric(df), 
-                    upper = as.numeric(df), 
-                    lower = as.numeric(df))
- 
-    output = rbind(df, output)
-  }
-  return(output)
+        output = data.frame(mean = as.numeric(frcst$mean +  seas$season + seas$error),
+                         upper = as.numeric(frcst$upper + seas$season + seas$error), 
+                         lower = as.numeric(frcst$lower + seas$season + seas$error))
+    
+        df = data.frame(mean = as.numeric(df), 
+                        upper = as.numeric(df), 
+                        lower = as.numeric(df))
+     
+        output = rbind(df, output)
+      }
+      return(output)
   
 }
-
 
 ########################################################################
 # 
