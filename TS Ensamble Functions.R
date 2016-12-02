@@ -6,188 +6,7 @@ library(dplyr)
 # this function holds the methods to run the TS analysis
 #
 ########################################################################
-
-models_runs = function(method, 
-                       start, 
-                       frequency, 
-                       df, 
-                       h, surpress.error = F, 
-                       season = F,
-                       ma_adj = 0, 
-                       CI = 95, 
-                       return_method = c('stack','list')) {
-  if(ma_adj > 0){
-    df = ma(df, n = ma_adj)
-  }
-  
-  if(season & method != 'STL'){
-    seas = stl(ts(df, start = start, frequency = frequency), s.window = h, robust = T)
-    
-    df = seas$time.series[,2] #for the trend compponent
-    
-    seas = list( seasonal = as.double(rep(seas$time.series[(nrow(seas$time.series) - frequency + 1):nrow(seas$time.series),1],
-                     ceiling(h/frequency))[1:h]),
-                 error = as.numeric(seas$time.series[nrow(seas$time.series),3])
-                 )
-  } else {
-    seas = list(seasonl = 0, error = 0)
-    
-  }
-  if (method == 'HoltWinters') {
-    
-    M = try(HoltWinters(ts(df, start = start, frequency = frequency)), silent = T)
-    
-  } else if (method == 'ARIMA'){
-    for(d in 0:5)
-    {
-      print('try')
-      M = try(arima(as.numeric(df), order = c(1,d,1), seasonal = list(order = c(1,d,1), period = frequency)),silent = T)
-      if(!inherits(M,"try-error")) {break}
-    }
-    if(inherits(M,"try-error")) { #ERROR
-      print("Couldn't find a non stationary means for ARIMA; switching to auto arima")
-      M = auto.arima(df, parallel =  T, stepwise = F)
-    } 
-  }else if (method == 'STL'){
-    M = try(stl(ts(df, start = start, frequency = frequency), s.window = "periodic", robust = T, s.degree = 1), silent = F)
-  } else if  (method == 'TBATS') {
-    M = try(tbats(ts(df, start = start, frequency = frequency), seasonal.periods = frequency), silent = F)
-  } else if (method == 'lm') {
-    sub_df = data.frame(y = df[(NROW(df) - 51):NROW(df)], t = 1:52, wt = 1:52/52)
-    M = lm(y ~ t, data = sub_df, weight = sub_df$wt) 
-    # M = lm(y ~ t, data = sub_df) 
-    
-  } else {
-    
-    M == 1
-  }
-  
-  
-  if(inherits(M,"try-error")) {
-    if(!surpress.error){
-      print(paste(c(method," Failed, will not use"), sep = ""))}
-    df = 0
-    frcst = 0
-  } else if (method == 'HoltWinters'){
-    
-    df[(NROW(df) -  nrow(data.frame(M[1])) + 1):NROW(df)] = data.frame(M[1])[,1]
-    df[is.na(df)]=df[is.na(df)]
-    frcst = forecast(M,h=h, level = CI)
-    
-  } else if(method == 'ARIMA')
-  {
-    frcst = forecast(M, h=h, level = CI)
-    df = df - as.numeric(M$residuals) 
-    
-  } else if(method == 'STL'){
-    df = rowSums(data.frame(M[1])[,1:2])
-    frcst = forecast(M,h=h,method = 'arima', level = CI)
-    
-  } else if(method == 'TBATS'){
-    df = as.numeric(M$fitted.values)
-    frcst = forecast(M, h=h, level = CI)
-  } else if(method == 'lm'){
-    lm_predict = as.double(predict(M, newdata = data.frame(t = 52:(52 + h))))
-    # lm_predict = lm_predict + (df[NROW(df)] - lm_predict[1]) #adjusting it so that the last point is right on target
-    z_score = qnorm(float(CI)/100)
-    sd_df = sd(df)
-    frcst = structure(list(
-      mean = lm_predict[2:NROW(lm_predict)],
-models_runs = function(method, 
-                       start = c(1900,1), 
-                       frequency, 
-                       df, 
-                       h, 
-                       surpress.error = F, 
-                       season = F,
-                       ma_adj = 0, 
-                       CI = 95, 
-                       return_method = c('stack','list')) {
-      if(ma_adj > 0){
-        df = ma(df, n = ma_adj)
-      }
-      
-      if(season & method != 'STL'){
-        seas = stl(ts(df, start = start, frequency = frequency), s.window = h, robust = T)
-        
-        df = seas$time.series[,2] #for the trend compponent
-        
-        seas = list( seasonal = as.double(rep(seas$time.series[(nrow(seas$time.series) - frequency + 1):nrow(seas$time.series),1],
-                         ceiling(h/frequency))[1:h]),
-                     error = as.numeric(seas$time.series[nrow(seas$time.series),3])
-                     )
-      } else {
-        seas = list(seasonl = 0, error = 0)
-        
-      }
-      if (method == 'HoltWinters') {
-        
-        M = try(HoltWinters(ts(df, start = start, frequency = frequency)), silent = T)
-        
-      } else if (method == 'ARIMA'){
-        for(d in 0:5)
-        {
-          print('try')
-          M = try(arima(as.numeric(df), order = c(1,d,1), seasonal = list(order = c(1,d,1), period = frequency)),silent = T)
-          if(!inherits(M,"try-error")) {break}
-        }
-        if(inherits(M,"try-error")) { #ERROR
-          print("Couldn't find a non stationary means for ARIMA; switching to auto arima")
-          M = auto.arima(df, parallel =  T, stepwise = F)
-        } 
-      }else if (method == 'STL'){
-        M = try(stl(ts(df, start = start, frequency = frequency), s.window = "periodic", robust = T, s.degree = 1), silent = F)
-      } else if  (method == 'TBATS') {
-        M = try(tbats(ts(df, start = start, frequency = frequency), seasonal.periods = frequency), silent = F)
-      } else if (method == 'lm') {
-        sub_df = data.frame(y = df[(NROW(df) - 51):NROW(df)], t = 1:52, wt = 1:52/52)
-        M = lm(y ~ t, data = sub_df, weight = sub_df$wt) 
-        # M = lm(y ~ t, data = sub_df) 
-        
-      } else {
-        
-        M == 1
-      }
-      
-      
-      if(inherits(M,"try-error")) {
-        if(!surpress.error){
-          print(paste(c(method," Failed, will not use"), sep = ""))}
-   
-      } else if (method == 'HoltWinters'){
-        
-        df[(NROW(df) -  nrow(data.frame(M[1])) + 1):NROW(df)] = data.frame(M[1])[,1]
-        df[is.na(df)]=df[is.na(df)]
-        frcst = forecast(M,h=h, level = CI)
-        
-      } else if(method == 'ARIMA')
-      {
-        frcst = forecast(M, h=h, level = CI)
-        df = df - as.numeric(M$residuals) 
-        
-      } else if(method == 'STL'){
-        df = rowSums(data.frame(M[1])[,1:2])
-        frcst = forecast(M,h=h,method = 'arima', level = CI)
-        
-      } else if(method == 'TBATS'){
-        df = as.numeric(M$fitted.values)
-        frcst = forecast(M, h=h, level = CI)
-      } else if(method == 'lm'){
-        lm_predict = as.double(predict(M, newdata = data.frame(t = 52:(52 + h))))
-        # lm_predict = lm_predict + (df[NROW(df)] - lm_predict[1]) #adjusting it so that the last point is right on target
-        z_score = qnorm(float(CI)/100)
-        sd_df = sd(df)
-        frcst = structure(list(
-          mean = lm_predict[2:NROW(lm_predict)],
-          lower = data.frame(lm_predict[2:NROW(lm_predict)] - z_score*sd_df
-          ),
-          upper = data.frame(lm_predict[2:NROW(lm_predict)] + z_score*sd_df
-          )
-        )
-        )               
-        
-      } else {
-models_runs = function(method, 
+ models_runs = function(method, 
                        start = c(1900,1), 
                        frequency, 
                        df, 
@@ -243,7 +62,7 @@ models_runs = function(method,
       } else {
         
         M == 1
-      }
+   }
       
    # once we have the model, it's time to forecaste   
       if(inherits(M,"try-error")) { #if there was an error....stop sleeping on the job, Kevin
@@ -300,9 +119,9 @@ models_runs = function(method,
   #returning the values now
   if(inherits(M,"try-error")){
     
-    output = data.frame(mean = rep(0, (h + nrow(df))),
-                        upper = rep(0, (h + nrow(df))),
-                        lower = rep(0, (h + nrow(df)))
+    output = data.frame(mean = rep(NA, (h + nrow(df))),
+                        upper = rep(NA, (h + nrow(df))),
+                        lower = rep(NA, (h + nrow(df)))
                         )
     
   } else if(return_method[1] == 'list') {
@@ -326,19 +145,23 @@ models_runs = function(method,
 }
 
 
-df_smooth = function(df, blend_threshhold = 0.05, start_index = 1, blend_dist = 52, remove_zero_col = T){
-     mean_v = apply(df, 2, mean)
-     index_c = 1:ncol(df)
-     if (remove_zero_col == T){
+df_smooth = function(df, blend_threshhold = 0.05, start_index = 1, blend_dist = 52, rm.na_col = T){
+     mean_v = apply(df, 2, mean, rm.na = F)
+     index_v = 1:ncol(df)
+ 
+     if (rm.na_col == T){
        
-       index_v = index_v[!mean_v == 0]
+       index_v = index_v[!is.na(mean_v)]
      }
-     
-     for(ind in index_c[1:(length(index_c)-1)]){
-       try(diff = abs(df[blend_dist + start_index,ind]/df[blend_dist + start_index, index_c[ind + 1]]))
+    
+     for(ind in index_v[1:(length(index_v)-1)]){
+  
+        diff = try(abs(df[blend_dist + start_index,ind]/df[blend_dist + start_index, index_v[match(ind, index_v) + 1]] - 1))
        if(inherits(diff, "try-error")) {next}
-       if( abs(diff) > blend_threshold ){
-         df[start_index:nrow(df), ind] = (df[start_index:nrow(df),ind] + df[start_index:nrow(df), index_c[ind + 1]])/2
+       
+       if( abs(diff) > blend_threshhold ){
+         print('blending inneciated')
+         df[start_index:nrow(df), ind] = (df[start_index:nrow(df),ind] + df[start_index:nrow(df), index_v[match(ind, index_v) + 1]])/2
       }
          
        
@@ -347,6 +170,23 @@ df_smooth = function(df, blend_threshhold = 0.05, start_index = 1, blend_dist = 
      
   
 }
+
+explosion_check = function(v, threshhold = 0.01){
+  #checking to make sure that the forecast didn't exploded to the moon or to the earths center
+  
+      check = try(abs(mean(c(diff(v),0)/v))) #the average percantage change for each PP
+      if(inherits(check, 'try-error')){ #Was there an enrror when performaing the check
+        return(TRUE)
+      } else if (is.na(check)){ #did it return an NA
+        return(TRUE)
+      } else if(check > threshhold){ #it did exploded way beyond the range
+        return(FALSE)
+      } else { #passed all the test
+        return(TRUE)
+      }
+}
+ 	      
+	      
 ########################################################################
 # 
 # this function applies a moving average to the data
