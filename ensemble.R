@@ -1,4 +1,13 @@
 
+
+
+
+
+
+
+
+
+
 ensablem_ts_forecast = function (x,
                                  start = c(1900, 1), 
                                  frequency = 26, #frequency of the data set
@@ -13,8 +22,10 @@ ensablem_ts_forecast = function (x,
                                  models_to_calc_with = models, #what models do you want to use in the calculations?
                                  growth_limit = 0.01, #what is the avearge growth limit of a model before we cut it from consideraionts?
                                  blend_threshhold = NA, #what is our percentage change we want to use for the blend (NA menas do not blend)
-                                 to_index = NA,
-                                 ma_adj = NA,
+                                 to_index = c(0),
+                                 ma_adj = 0,
+                                 CI = 95,
+                                 de_season = F,
                                  ...
 )
 {
@@ -49,17 +60,16 @@ ensablem_ts_forecast = function (x,
   
   # Creating a list of Data frames, each column of the dataframe will hold the forecasted values
   # and chec dataframe is unique to EACH forecasting method
+    #inisilizing a null list
+      ft_mean = vector()
+      ft_upper = vector()
+      ft_lower = vector()
     #now building the proper dataframes
-     ft_mean = lapply(models, function(x) data.frame(matrix(0,nrow = h, ncol = length(to_index))))
-       ######################
-       # WORKING HERE YA BASTARD!!!!!!
-       ######################
-    
+    ft_mean = lapply(models, function(x) data.frame(matrix(0,nrow = (h + NROW(df)), ncol = length(to_index))))
     names(ft_mean) = models
     ft_upper = ft_mean
     ft_lower = ft_mean
-  #this will hold each models forecasted values
-  ft = data.frame(rep(0, h))
+
   #error flag incase any of the methods fail
   error_flag = FALSE
   
@@ -67,16 +77,125 @@ ensablem_ts_forecast = function (x,
   #running the models
   for (m in models)
   {
-    for (i in to_index){
-      h_adj =  (nrow(df) - to_index[i]) + h
-      ret = models_runs(method = m, 
-                        start= start, 
-                        frequency = frequency, 
-                        df = df[,1], 
-                        h = h_adj, 
-                        ma_adj = ma_adj)
-      
     
+    temp_list = lapply(to_index, function(x) models_runs(method =  m, 
+                                                         start = start,
+                                                         frequency = frequency,
+                                                         df = df[1:(NROW(df) - abs(x))],
+                                                         h = h + abs(x),
+                                                         surpress.error = F,
+                                                         season = de_season,
+                                                         CI = CI))
+                                                         
+      for(i in 1:length(temp_list)){
+        ft_mean[[m]][,i] = temp_list[[i]][,1]
+        ft_upper[[m]][,i] = temp_list[[i]][,2]
+        ft_lower[[m]][,i] = temp_list[[i]][,3]
+      }
+   
+    ###
+    #Check to see if the forecast exploded (ie grew or shrank WAY to fast)
+    ###
+    
+    if(growth_limit != 0.0 & !is.na(growth_limit)){
+      check = apply(ft_mean[[m]], 2, explosion_check, threshhold = growth_limit)
+      if(sum(check) < ncol(ft_mean[[m]])){
+        print(paste(c("We've had some explosions, for model ", m," at position", to_index[check], "going to remove them"),collapse = " "))
+        #zeroing out all fields that 'exploded'
+        ft_mean[[m]][,check] = rep(NA,nrow(ft_mean[[m]]))
+        ft_upper[[m]][,check] = rep(NA,nrow(ft_upper[[m]]))
+        ft_lower[[m]][,check] = rep(NA,nrow(ft_lower[[m]]))
+        }
+      
+      } 
+    
+    
+    ###
+    #now we are going to smooth the data (if we want to smooth it)
+    ###
+      if(!is.na(blend_threshhold)){
+          ft_mean[[m]] = df_smooth(ft_mean[[m]], blend_threshhold = blend_threshhold, start_index = (NROW(df)+1))
+          ft_lower[[m]] = df_smooth(ft_lower[[m]], blend_threshhold = blend_threshhold, start_index = (NROW(df)+1))
+          ft_upper[[m]] = df_smooth(ft_upper[[m]], blend_threshhold = blend_threshhold, start_index = (NROW(df)+1))
+      }
+   
+        
+    ###
+    # if we log transforemd the variables, we want to transform them back.
+    ###
+    if(log_transform){
+      zero_check = apply(ft_mean[[m]], 2, mean)
+      zero_check = !is.na(zero_check)
+      
+      ft_mean[[m]][,zero_check] = exp(ft_mean[[m]][,zero_check])
+      ft_upper[[m]][,zero_check] = exp(ft_upper[[m]][,zero_check])
+      ft_lower[[m]][,zero_check] = exp(ft_lower[[m]][,zero_check])
+    }
+    
+    ###
+    # Now aggregating to the 'final' column of each
+    ###
+      if(ncol(ft_mean[[m]]) > 1){ #there is more than one column
+        ft_mean[[m]]$Final = rowMeans(ft_mean[[m]], na.rm = TRUE)
+        ft_upper[[m]]$Final = rowMeans(ft_upper[[m]], na.rm = TRUE)
+        ft_lower[[m]]$Final = rowMeans(ft_lower[[m]], na.rm = TRUE)
+      } else { #there is only one columns (rowMeans doesn't work)
+        ft_mean[[m]]$Final = ft_mean[[m]][,1]
+        ft_upper[[m]]$Final = ft_upper[[m]][,1]
+        ft_lower[[m]]$Final = ft_lower[[m]][,1]
+        
+      }
+    ###
+    # Finally, testing to see if $Final is viable (usable) 
+    ###
+      if(is.na(mean(ft_mean[[m]]$Final))){
+          models_to_calc_with = setdiff(models_to_calc_with, m)
+      }
+  } #ending the model for loop
+  
+  ###now we have a ft_mean list that contains multiple dataframes, each for a seperae modeling techinuq
+  ###that has been cleaned and smoothed (if need be) and aggregated together we just gotta paste the bits together :D
+  
+    ft = data.frame(lapply(models, function(x) data.frame(ft_mean[[x]]$Final,
+                                                     ft_upper[[x]]$Final,
+                                                      ft_lower[[x]]$Final
+                                                     )))
+    names(ft) = #adding name vector
+      as.vector( 
+              unlist(
+                    lapply(models, function(x) c(as.character(x), 
+                                                 paste(c(x,"upper"), collapse ="_"),
+                                                 paste(c(x,"lower"), collapse ="_")
+                                                 )
+                           )
+                  )
+            )
+    
+    ###
+    # Adding in the average value of all the models (that survived) to acutally produce our forecast
+    ###
+    
+    if(length(models_to_calc_with) > 1) {
+        ft$x = rowMeans(ft[,models_to_calc_with], na.rm = T)
+        ft$x_upper = rowMeans(ft[,match(models_to_calc_with, names(ft))+1], na.rm = T) 
+        ft$x_lower = rowMeans(ft[,match(models_to_calc_with, names(ft))+2], na.rm = T)
+    } else if (length(models_to_calc_with) == 1){
+        ft$x = ft[,models_to_calc_with]
+        ft$x_upper = ft[,match(models_to_calc_with, names(ft))+1] 
+        ft$x_lower = ft[,match(models_to_calc_with, names(ft))+2]
+    } else {stop("No models were found to work, yeeesh")}
+    
+    ft = ft[,c((ncol(ft)-2):ncol(ft), 1:(ncol(ft)-3))]  #reordering the columns
+          
+    ###
+    # making the actual historical record correct
+    ###
+        if(!is.null(log_transform)){
+          df = exp(df)
+        }
+    
+      ft[1:NROW(df), c("x","x_upper","x_lower")] = df
+      
         frcst = ret$forecast
         
         if(NROW(ret$df) == 1){
